@@ -51,7 +51,7 @@ module.exports = {
 
     const entrants = [];
     const filter = (interaction) => interaction.customId === 'enter';
-    const collector = giveawayMessage.createMessageComponentCollector({ filter, time: durationMs });
+    const collector = giveawayMessage.createMessageComponentCollector({ filter });
 
     const startTime = Date.now();
     const endTime = startTime + durationMs;
@@ -110,4 +110,4 @@ module.exports = {
       }
     });
   },
-};
+}
