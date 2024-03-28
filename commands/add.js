@@ -1,0 +1,59 @@
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const User = require('../models/User');
+const currencyFormatter = require('currency-formatter');
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('add')
+    .setDescription('Add money to a user\'s balance')
+    .addUserOption(option =>
+      option
+        .setName('user')
+        .setDescription('The user to add money to')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('amount')
+        .setDescription('The amount of money to add')
+        .setRequired(true)
+    ),
+  async execute(interaction) {
+    const authorId = interaction.user.id;
+    const allowedUserId = '961788342163349574'; // Replace with the allowed user ID
+
+    if (authorId !== allowedUserId) {
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setDescription('❌ You do not have permission to use this command.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    const targetUser = interaction.options.getUser('user');
+    const amount = interaction.options.getInteger('amount');
+
+    if (!targetUser || amount <= 0) {
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setDescription('❌ Invalid command usage. Please mention a user and provide a valid amount.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    const targetUserId = targetUser.id;
+    let user = await User.findOne({ userId: targetUserId });
+
+    if (!user) {
+      user = new User({ userId: targetUserId });
+      await user.save();
+    }
+
+    user.balance += amount;
+    await user.save();
+
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setDescription(`✅ Added ${currencyFormatter.format(amount, { code: 'USD' })} to ${targetUser.username}'s balance.`);
+
+    interaction.reply({ embeds: [embed] });
+  },
+};
