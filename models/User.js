@@ -4,8 +4,8 @@ const userSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },
   balance: { type: Number, default: 0 },
   lastDailyReward: { type: Number, default: 0 },
-  lastWorkTime: { type: Number, default: 0 }, // Add this line
-  jobLevel: { // Add this field
+  lastWorkTime: { type: Number, default: 0 },
+  jobLevel: {
     type: Object,
     default: {
       cashier: 1,
@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema({
       ceo: 1
     }
   },
+  textExperience: { type: Number, default: 0 },
+  voiceExperience: { type: Number, default: 0 }, // Add this line
+  level: { type: Number, default: 1 }, // Add this line
+  requiredExperience: { type: Number, default: 100 }, // Add this line
   purchasedItems: [
     {
       name: { type: String, required: true },
