@@ -12,11 +12,7 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
 });
 
-// Drop cash every 5 minutes
-const dropCash = require('./commands/dropCash');
-setInterval(() => {
-  dropCash.execute(client);
-}, 300000);
+
 
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
