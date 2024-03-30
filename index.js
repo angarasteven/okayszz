@@ -79,8 +79,8 @@ client.on('interactionCreate', async interaction => {
 });
 
 const startAutodrop = async () => {
-  const channelId = '1109831822495461453'; // Replace with the desired channel ID
-  const dropInterval = 600000; // 10 minutes (in milliseconds)
+  const channelId = '1223205008879652925'; // Replace with the desired channel ID
+  const dropInterval = 60000; // 10 minutes (in milliseconds)
   const expireTime = 60000; // 1 minute
 
   setInterval(async () => {
