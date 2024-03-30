@@ -1,3 +1,5 @@
+const currencyFormatter = require('currency-formatter');
+const User = require('./models/User');
 const { Client, GatewayIntentBits, Collection, Routes } = require('discord.js');
 const { REST } = require('@discordjs/rest');
 const { TOKEN, CLIENT_ID, GUILD_ID } = process.env;
@@ -80,7 +82,7 @@ client.on('interactionCreate', async interaction => {
 
 const startAutodrop = async () => {
   const channelId = '1223205008879652925'; // Replace with the desired channel ID
-  const dropInterval = 60000; // 10 minutes (in milliseconds)
+  const dropInterval = 240000; // 10 minutes (in milliseconds)
   const expireTime = 60000; // 1 minute
 
   setInterval(async () => {
@@ -91,7 +93,7 @@ const startAutodrop = async () => {
         return;
       }
 
-      const amount = Math.floor(Math.random() * 3000) + 1;
+      const amount = Math.floor(Math.random() * 6000) + 1;
       const dropEmbed = new EmbedBuilder()
         .setColor(0x00FF00)
         .setTitle('💰 Random Drop! 💰')
