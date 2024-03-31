@@ -93,7 +93,7 @@ const startAutodrop = async () => {
         return;
       }
 
-      const amount = Math.floor(Math.random() * 6000) + 1;
+      const amount = Math.floor(Math.random() * 3000) + 1;
       const dropEmbed = new EmbedBuilder()
         .setColor(0x00FF00)
         .setTitle('💰 Random Drop! 💰')

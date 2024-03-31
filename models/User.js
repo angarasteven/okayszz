@@ -16,9 +16,17 @@ const userSchema = new mongoose.Schema({
     }
   },
   textExperience: { type: Number, default: 0 },
-  voiceExperience: { type: Number, default: 0 }, // Add this line
-  level: { type: Number, default: 1 }, // Add this line
-  requiredExperience: { type: Number, default: 100 }, // Add this line
+  voiceExperience: { type: Number, default: 0 },
+  level: { type: Number, default: 1 },
+  requiredExperience: { type: Number, default: 100 },
+  multiplier: {
+    type: Object,
+    default: {
+      type: null,
+      value: 1,
+      expiresAt: null
+    }
+  },
   purchasedItems: [
     {
       name: { type: String, required: true },

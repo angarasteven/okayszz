@@ -4,8 +4,12 @@ const currencyFormatter = require('currency-formatter');
 
 const MIN_BET = 100; // Minimum bet amount
 const MAX_BET = 10000; // Maximum bet amount
-const COOLDOWN_DURATION = 10000; // 10 seconds cooldown
+const COOLDOWN_DURATION = 7000; // 7 seconds cooldown
 const STREAK_MULTIPLIER = 1.2; // 20% bonus for each consecutive win
+const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
+const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
+const MAX_WIN_CHANCE = 90; // Maximum win chance
+const MIN_WIN_CHANCE = 10; // Minimum win chance
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -29,6 +33,7 @@ module.exports = {
     ),
   cooldowns: new Map(),
   streaks: new Map(),
+  winChances: new Map(),
 
   async execute(interaction) {
     const userId = interaction.user.id;
@@ -37,68 +42,64 @@ module.exports = {
 
     // Check if the bet amount is within the allowed range
     if (amount < MIN_BET || amount > MAX_BET) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ The bet amount should be between ${currencyFormatter.format(MIN_BET, { code: 'USD' })} and ${currencyFormatter.format(MAX_BET, { code: 'USD' })}.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply(`The bet amount should be between ${currencyFormatter.format(MIN_BET, { code: 'USD' })} and ${currencyFormatter.format(MAX_BET, { code: 'USD' })}.`);
     }
 
     // Check if the user is on cooldown
-    const cooldownEntry = this.cooldowns.get(userId);
-    if (cooldownEntry && cooldownEntry > Date.now()) {
-      const timeRemaining = (cooldownEntry - Date.now()) / 1000; // Convert to seconds
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ You're on cooldown! Please wait ${timeRemaining.toFixed(1)} seconds before using this command again.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+    if (this.cooldowns.has(userId)) {
+      const cooldownExpiration = this.cooldowns.get(userId);
+      const remainingCooldown = cooldownExpiration - Date.now();
+      if (remainingCooldown > 0) {
+        return interaction.reply(`You're on cooldown for ${Math.ceil(remainingCooldown / 1000)} more seconds. ⏰`);
+      }
     }
 
+    // Get the user's balance and win chance
     const user = await User.findOne({ userId });
+    const userBalance = user.balance;
+    let winChance = this.winChances.get(userId) || 50;
 
-    if (!user || user.balance < amount) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ You don't have enough balance to bet ${currencyFormatter.format(amount, { code: 'USD' })}.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+    // Check if the user has enough balance
+    if (userBalance < amount) {
+      return interaction.reply(`You don't have enough money to make this bet. Your current balance is ${currencyFormatter.format(userBalance, { code: 'USD' })}. 💰`);
     }
 
-    const winningChance = 0.48; // 30% chance of winning
-    const isWin = Math.random() < winningChance;
-    const result = isWin ? 'heads' : 'tails';
+    // Flip the coin
+    const result = Math.random() < winChance / 100 ? choice : choice === 'heads' ? 'tails' : 'heads';
+    const won = result === choice;
 
-    let multiplier = 1; // Default multiplier
-    let streak = this.streaks.get(userId) || 0; // Get the user's current streak
-
-    if (isWin && choice === result) {
+    // Update the user's balance, streak, and win chance
+    let streak = this.streaks.get(userId) || 0;
+    let multiplier = 1;
+    if (won) {
       streak++;
-      multiplier = Math.pow(STREAK_MULTIPLIER, streak); // Apply streak multiplier
+      multiplier = STREAK_MULTIPLIER ** streak;
+      winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
     } else {
       streak = 0;
+      winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
     }
+    this.streaks.set(userId, streak);
+    this.winChances.set(userId, winChance);
 
-    this.streaks.set(userId, streak); // Update the user's streak
+    const payout = won ? amount * multiplier : -amount;
+    await User.updateOne({ userId }, { $inc: { balance: payout } });
 
-    let embed = new EmbedBuilder()
-      .setColor(isWin && choice === result ? 0x00FF00 : 0xFF0000)
-      .setTitle(isWin && choice === result ? '🎉 You won! 🎉' : '😔 You lost... 😔')
-      .setDescription(`🪙 The coin landed on ${result === 'heads' ? '👑 Heads' : '🐍 Tails'}!${isWin && choice === result ? ` You won ${currencyFormatter.format(amount * multiplier, { code: 'USD' })}!` : ' Better luck next time!'}`);
+    // Set a cooldown for the user
+    this.cooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
 
-    if (isWin && choice === result) {
-      user.balance += amount * multiplier;
-      await user.save();
-      embed = new EmbedBuilder(embed)
-        .addFields({ name: 'New Balance', value: `💰 ${currencyFormatter.format(user.balance, { code: 'USD' })}` });
-      interaction.reply({ embeds: [embed] });
-    } else {
-      user.balance -= amount;
-      await user.save();
-      embed = new EmbedBuilder(embed)
-        .addFields({ name: 'New Balance', value: `💰 ${currencyFormatter.format(user.balance, { code: 'USD' })}` });
-      interaction.reply({ embeds: [embed] });
-    }
-
-    // Set the cooldown for the user
-    const cooldownExpiration = Date.now() + COOLDOWN_DURATION;
-    this.cooldowns.set(userId, cooldownExpiration);
-  },
+    // Send the result to the user
+    const embedColor = won ? 0x00FF00 : 0xFF0000;
+    const embedDescription = `You ${won ? 'won 🎉' : 'lost 😢'} ${currencyFormatter.format(Math.abs(payout), { code: 'USD' })}! The result was ${result}.`;
+    const embed = new EmbedBuilder()
+      .setColor(embedColor)
+      .setDescription(embedDescription)
+      .addFields(
+        { name: 'Your Balance', value: `${currencyFormatter.format(userBalance + payout, { code: 'USD' })} 💰`, inline: true },
+        { name: 'Streak', value: `${streak} 🔥`, inline: true },
+        { name: 'Win Chance', value: `${winChance}% 🎲`, inline: true },
+        { name: 'Multiplier', value: `${multiplier}x 💎`, inline: true }
+      );
+    interaction.reply({ embeds: [embed] });
+  }
 };
