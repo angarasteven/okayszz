@@ -7,12 +7,12 @@ module.exports = {
   async execute(interaction) {
     // Command Groups
     const commandGroups = {
-      'Fun': ['add', 'additem', 'balance', 'buy', 'coinflip', 'daily', 'give', 'giveaway', 'help', 'leaderboard', 'remove', 'removeitem', 'rob', 'shop', 'slot', 'work']
+      'Fun': ['add', 'additem', 'balance', 'buy', 'coinflip', 'daily', 'give', 'giveaway', 'help', 'leaderboard', 'remove', 'removeitem', 'rob', 'shop', 'slot', 'work', 'tictactoeuser', 'tictactoebot', 'lucky9']
     };
 
     const embed = new EmbedBuilder()
       .setColor('#0099ff')
-      .setTitle('Economc Bot Commands')
+      .setTitle('Economic Bot Commands')
     
     for (const category in commandGroups) {
       let categoryDescription = '';

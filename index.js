@@ -36,7 +36,7 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 const refreshCommands = async () => {
   try {
-    console.log('Refreshing application (/) commands...');
+    console.log('Refreshing global (/) commands...');
 
     const commands = [];
     for (const command of client.commands.values()) {
@@ -44,15 +44,16 @@ const refreshCommands = async () => {
     }
 
     const data = await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      Routes.applicationCommands(CLIENT_ID),
       { body: commands },
     );
 
-    console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+    console.log(`Successfully reloaded ${data.length} global (/) commands.`);
   } catch (error) {
     console.error(error);
   }
 };
+
 
 refreshCommands();
 

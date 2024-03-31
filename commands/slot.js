@@ -1,237 +1,215 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const User = require('../models/User');
 const currencyFormatter = require('currency-formatter');
+const crypto = require('crypto');
 
-const slotEmojis = ['🍒', '🍋', '🍊', '🍇', '🍓', '🍍', '🍌', '🍉'];
-const fruitMultipliers = {
-  '🍒': 4, // Cherry (x4 multiplier)
-  '🍋': 3, // Lemon (x3 multiplier)
-  '🍊': 3, // Orange (x3 multiplier)
-  '🍇': 3, // Grapes (x2 multiplier)
-  '🍓': 2, // Strawberry (x2 multiplier)
-  '🍍': 2, // Pineapple (x2 multiplier)
-  '🍌': 2, // Banana (x2 multiplier)
-  '🍉': 2, // Watermelon (x2 multiplier)
+const SLOT_SYMBOLS = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '⚪', '⚫'];
+const SYMBOL_MULTIPLIERS = {
+  '🔴': 2, // Red
+  '🟠': 2, // Orange
+  '🟡': 2, // Yellow
+  '🟢': 2, // Green
+  '🔵': 2, // Blue
+  '🟣': 2, // Purple
+  '⚪': 2, // White
+  '⚫': 2, // Black
 };
-const paylines = [
-  [0, 1, 2], // Horizontal
-  [3, 4, 5], // Horizontal
-  [6, 7, 8], // Horizontal
-  [0, 3, 6], // Vertical
-  [1, 4, 7], // Vertical
-  [2, 5, 8], // Vertical
-  [0, 4, 8], // Diagonal
-  [2, 4, 6], // Diagonal
-];
-const MIN_BET = 100; // Minimum bet amount
-const MAX_BET = 10000; // Maximum bet amount
-const COOLDOWN_DURATION = 10000; // 10 seconds cooldown
-const SPIN_DURATION = 3000; // 3 seconds for spinning animation
-const JACKPOT_CHANCE = 0.01; // 1% chance of hitting the jackpot
-const JACKPOT_MULTIPLIER = 10; // 10x multiplier for the jackpot
-const BASE_WIN_CHANCE = 50; // Base 50% winning chance
-const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
-const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
-const MAX_WIN_CHANCE = 64; // Maximum win chance
-const MIN_WIN_CHANCE = 10; // Minimum win chance
-const RESET_WIN_CHANCE = 50; // Reset win chance to BASE_WIN_CHANCE when reached
+const SLOT_ROWS = 3;
+const SLOT_COLS = 3;
+const MIN_BET = 100;
+const MAX_BET = 10000;
+const REWARD_MULTIPLIER = 3;
+const COOLDOWN_DURATION = 35000; // 7 seconds
+const STREAK_MULTIPLIER = 0.5; // 50% bonus for each consecutive win
+const ANIMATION_DURATION = 5000; // 5 seconds
+
+let winningChance = 0.5; // Initial winning chance
+const cooldowns = new Map(); // Cooldown map for each user
+const streaks = new Map(); // Streak map for each user
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('slots')
-    .setDescription('Play the slots game and try your luck! 🎰')
+    .setName('slot')
+    .setDescription('Play the slot machine game!')
     .addIntegerOption(option =>
       option
         .setName('bet')
         .setDescription('The amount of coins to bet')
         .setRequired(true)
     ),
-  cooldowns: new Map(),
-  winChances: new Map(),
-  betAmounts: new Map(),
 
   async execute(interaction) {
-    const userId = interaction.user.id;
+    const user = await User.findOne({ userId: interaction.user.id });
+    if (!user) return interaction.reply('You don\'t have an account yet. Use `/daily` to create one and get your starting balance.');
+
     const betAmount = interaction.options.getInteger('bet');
-
-    // Check if the bet amount is within the allowed range
     if (betAmount < MIN_BET || betAmount > MAX_BET) {
-      return interaction.reply(`The bet amount should be between ${currencyFormatter.format(MIN_BET, { code: 'USD' })} and ${currencyFormatter.format(MAX_BET, { code: 'USD' })}.`);
-    }
-
-    // Check if the user is on cooldown
-    if (this.cooldowns.has(userId)) {
-      const cooldownExpiration = this.cooldowns.get(userId);
-      const remainingCooldown = cooldownExpiration - Date.now();
-      if (remainingCooldown > 0) {
-        return interaction.reply(`You're on cooldown for ${Math.ceil(remainingCooldown / 1000)} more seconds. ⏰`);
-      }
-    }
-
-    const user = await User.findOne({ userId });
-
-    if (!user) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ You don't have an account in the economy.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply(`The bet amount should be between ${currencyFormatter.format(MIN_BET, { code: 'COINS' })} and ${currencyFormatter.format(MAX_BET, { code: 'COINS' })}.`);
     }
 
     if (user.balance < betAmount) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ You don't have enough balance to bet ${currencyFormatter.format(betAmount, { code: 'USD' })}.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply(`You don't have enough coins. Your balance is ${currencyFormatter.format(user.balance, { code: 'COINS' })}.`);
     }
 
-    // Get the user's win chance
-    let winChance = this.winChances.get(userId) || BASE_WIN_CHANCE;
+    const cooldown = cooldowns.get(interaction.user.id);
+    if (cooldown) {
+      const remaining = (cooldown - Date.now()) / 1000;
+      return interaction.reply(`You need to wait ${remaining.toFixed(1)} more second(s) before playing again.`);
+    }
 
-    const tutorialEmbed = new EmbedBuilder()
-      .setColor(0x00FF00)
-      .setTitle('🎰 Slots Tutorial 🎰')
-      .setDescription('Welcome to the slots game! Here\'s how to play:')
-      .addFields(
-        { name: '1. Place your bet', value: 'Use the `/slots <bet>` command to place your bet.' },
-        { name: '2. Spin the reels', value: 'Click the "Spin" button to spin the reels.' },
-        { name: '3. Check for winning combinations', value: 'If you get a winning combination, you\'ll receive a payout based on the paytable.' },
-        { name: '4. Repeat', value: 'Keep playing and try to win big! 💰' }
-      )
-      .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }));
+    const streak = streaks.get(interaction.user.id) || 0;
+    const multiplier = 1 + (streak * STREAK_MULTIPLIER);
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('slots_spin')
-        .setLabel('Spin')
-        .setStyle(ButtonStyle.Primary)
-    );
+    const slots = generateSlots();
+    const isWin = checkWin(slots);
 
-    await interaction.reply({ embeds: [tutorialEmbed], components: [row] });
+    let rewardAmount = 0;
+    if (isWin) {
+      const winningSymbol = getWinningSymbol(slots);
+      const symbolMultiplier = SYMBOL_MULTIPLIERS[winningSymbol];
+      rewardAmount = betAmount * REWARD_MULTIPLIER * multiplier * symbolMultiplier;
+      user.balance += rewardAmount;
+      winningChance = Math.max(0.5, winningChance - 0.005); // Decrease winning chance by 0.5% on win
+      streaks.set(interaction.user.id, streak + 1);
+    } else {
+      user.balance -= betAmount;
+      winningChance = Math.min(0.64, winningChance + 0.01); // Increase winning chance by 1% on loss
+      streaks.set(interaction.user.id, 0);
+    }
 
-    const filter = i => i.customId === 'slots_spin' && i.user.id === interaction.user.id;
-    const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000 });
+    await user.save();
+    cooldowns.set(interaction.user.id, Date.now() + COOLDOWN_DURATION);
+    setTimeout(() => cooldowns.delete(interaction.user.id), COOLDOWN_DURATION);
 
-    collector.on('collect', async i => {
-      const reels = [
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-        slotEmojis[Math.floor(Math.random() * slotEmojis.length)],
-      ];
+    const animationEmbed = new EmbedBuilder()
+      .setTitle('🎰 Slot Machine')
+      .setDescription(renderSlots(slots));
 
-      const animationEmbed = new EmbedBuilder()
-        .setColor(0xFFFF00)
-        .setDescription('🎰 Spinning the reels... 🎰');
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('spin')
+          .setLabel('Spin')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(true)
+      );
 
-      await i.update({ embeds: [animationEmbed], components: [] });
+    const animationMessage = await interaction.reply({ embeds: [animationEmbed], components: [row] });
 
-      const animationInterval = setInterval(async () => {
-        const reelsString = `${reels[0]} ${reels[1]} ${reels[2]}\n${reels[3]} ${reels[4]} ${reels[5]}\n${reels[6]} ${reels[7]} ${reels[8]}`;
-        const animationEmbed = new EmbedBuilder()
-          .setColor(0xFFFF00)
-          .setDescription(`🎰 Spinning the reels...\n\n${reelsString}`);
+    // Simulate slot animation
+    const animationInterval = setInterval(() => {
+      const newSlots = generateSlots();
+      const newAnimationEmbed = new EmbedBuilder()
+        .setTitle('🎰 Slot Machine')
+        .setDescription(renderSlots(newSlots));
+      animationMessage.edit({ embeds: [newAnimationEmbed] });
+    }, 500);
 
-        await i.editReply({ embeds: [animationEmbed] });
+    setTimeout(() => {
+      clearInterval(animationInterval);
 
-        reels.unshift(reels.pop());
-      }, 500);
-
-      setTimeout(async () => {
-        clearInterval(animationInterval);
-
-        let winnings = 0;
-        const winningLines = [];
-        for (const payline of paylines) {
-          const [a, b, c] = payline.map(index => reels[index]);
-          if (a === b && b === c) {
-            const multiplier = fruitMultipliers[a];
-            winnings += betAmount * multiplier;
-            winningLines.push({ line: payline, multiplier });
-          }
-        }
-
-        const reelsString = `${reels[0]} ${reels[1]} ${reels[2]}\n${reels[3]} ${reels[4]} ${reels[5]}\n${reels[6]} ${reels[7]} ${reels[8]}`;
-
-        const isJackpot = Math.random() < JACKPOT_CHANCE;
-        if (isJackpot) {
-          winnings = betAmount * JACKPOT_MULTIPLIER;
-        }
-
-        let payout = winnings > 0 ? winnings : -betAmount;
-
-        const won = Math.random() < winChance / 100 || winnings > 0 || isJackpot;
-        if (won) {
-          user.balance += payout;
-          await user.save();
-          if (winChance === RESET_WIN_CHANCE) {
-            winChance = BASE_WIN_CHANCE;
-          } else {
-            winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
-          }
-        } else {
-          user.balance -= betAmount;
-          await user.save();
-          winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
-        }
-        this.winChances.set(userId, winChance);
-        this.betAmounts.set(userId, betAmount);
-
-        const embed = new EmbedBuilder()
-          .setColor(winnings > 0 || isJackpot ? 0x00FF00 : 0xFF0000)
-          .setTitle(winnings > 0 || isJackpot ? '🎉 You won! 🎉' : '😔 You lost... 😔')
-          .setDescription(`${reelsString}\n\nYou ${winnings > 0 || isJackpot ? `won ${currencyFormatter.format(payout, { code: 'USD' })}!` : `lost ${currencyFormatter.format(betAmount, { code: 'USD' })}.`}`)
-          .addFields(
-            { name: 'New Balance', value: `💰 ${currencyFormatter.format(user.balance, { code: 'USD' })}` },
-            { name: 'Winning Lines', value: winningLines.length > 0 ? winningLines.map(line => `[${line.line.join(', ')}] x${line.multiplier}`).join('\n') : 'None' },
-            { name: 'Jackpot', value: isJackpot ? `🎰 You hit the jackpot! 🎰` : 'No jackpot this time.' },
-            { name: 'Win Chance', value: `${winChance}% 🎲` }
-          );
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('slots_again')
-            .setLabel('Again?')
-            .setStyle(ButtonStyle.Primary)
+      const resultEmbed = new EmbedBuilder()
+        .setTitle('🎰 Slot Machine')
+        .setDescription(renderSlots(slots))
+        .addFields(
+          { name: 'Bet Amount', value: `${currencyFormatter.format(betAmount, { code: 'COINS' })}`, inline: true },
+          { name: 'Result', value: isWin ? `You won ${currencyFormatter.format(rewardAmount, { code: 'COINS' })}! ${getWinReason(slots)}` : 'You lost.', inline: true },
+          { name: 'Balance', value: `${currencyFormatter.format(user.balance, { code: 'COINS' })}`, inline: true },
+          { name: 'Winning Chance', value: `${(winningChance * 100).toFixed(2)}%`, inline: true },
+          { name: 'Streak', value: `${streak}`, inline: true },
+          { name: 'Multiplier', value: `${multiplier.toFixed(2)}x`, inline: true }
         );
 
-        await i.editReply({ embeds: [embed], components: [row] });
-
-        const againFilter = j => j.customId === 'slots_again' && j.user.id === interaction.user.id;
-        const againCollector = i.channel.createMessageComponentCollector({ filter: againFilter, time: 60000 });
-
-        againCollector.on('collect', async j => {
-          const betAmount = this.betAmounts.get(userId);
-          this.execute(j);
-        });
-
-        againCollector.on('end', async collected => {
-          if (collected.size === 0) {
-            const embed = new EmbedBuilder()
-              .setColor(0xFF0000)
-              .setDescription('❌ You didn\'t play again in time. The game has ended.');
-            await i.editReply({ embeds: [embed], components: [] });
-          }
-        });
-
-        collector.stop();
-
-        // Set a cooldown for the user
-        this.cooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-      }, SPIN_DURATION);
-    });
-
-    collector.on('end', async collected => {
-      if (collected.size === 0) {
-        const embed = new EmbedBuilder()
-          .setColor(0xFF0000)
-          .setDescription('❌ You didn\'t spin the reels in time. The game has ended.');
-        await interaction.editReply({ embeds: [embed], components: [] });
-      }
-    });
+      animationMessage.edit({ embeds: [resultEmbed], components: [] });
+    }, ANIMATION_DURATION);
   },
 };
+
+function generateSlots() {
+  const slots = [];
+  for (let row = 0; row < SLOT_ROWS; row++) {
+    const slotRow = [];
+    for (let col = 0; col < SLOT_COLS; col++) {
+      slotRow.push(SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)]);
+    }
+    slots.push(slotRow);
+  }
+  return slots;
+}
+
+function renderSlots(slots) {
+  let slotString = '';
+  for (const row of slots) {
+    slotString += row.join(' ') + '\n';
+  }
+  return slotString;
+}
+
+function checkWin(slots) {
+  // Check rows
+  for (const row of slots) {
+    if (row.every(symbol => symbol === row[0])) {
+      return true;
+    }
+  }
+
+  // Check columns
+  for (let col = 0; col < SLOT_COLS; col++) {
+    const column = slots.map(row => row[col]);
+    if (column.every(symbol => symbol === column[0])) {
+      return true;
+    }
+  }
+
+  // Check diagonals
+  const diagonal1 = [slots[0][0], slots[1][1], slots[2][2]];
+  const diagonal2 = [slots[0][2], slots[1][1], slots[2][0]];
+  if (diagonal1.every(symbol => symbol === diagonal1[0]) || diagonal2.every(symbol => symbol === diagonal2[0])) {
+    return true;
+  }
+
+  // Check winning chance
+  const randomValue = crypto.randomBytes(4).readUInt32BE(0) / 0xFFFFFFFF;
+  return randomValue < winningChance;
+}
+
+function getWinningSymbol(slots) {
+  // Check rows
+  for (const row of slots) {
+    if (row.every(symbol => symbol === row[0])) {
+      return row[0];
+    }
+  }
+
+  // Check columns
+  for (let col = 0; col < SLOT_COLS; col++) {
+    const column = slots.map(row => row[col]);
+    if (column.every(symbol => symbol === column[0])) {
+      return column[0];
+    }
+  }
+
+  // Check diagonals
+  const diagonal1 = [slots[0][0], slots[1][1], slots[2][2]];
+  const diagonal2 = [slots[0][2], slots[1][1], slots[2][0]];
+  if (diagonal1.every(symbol => symbol === diagonal1[0])) {
+    return diagonal1[0];
+  }
+  if (diagonal2.every(symbol => symbol === diagonal2[0])) {
+    return diagonal2[0];
+  }
+
+  // This should never happen, but return a default symbol just in case
+  return '🔴';
+}
+
+function getWinReason(slots) {
+  const winningSymbol = getWinningSymbol(slots);
+  const symbolMultiplier = SYMBOL_MULTIPLIERS[winningSymbol];
+
+  if (symbolMultiplier === 2) {
+    return `You won with the ${winningSymbol} symbol, which has a 2x multiplier.`;
+  } else {
+    return `You won with the ${winningSymbol} symbol, which has a 2x multiplier.`;
+  }
+}
