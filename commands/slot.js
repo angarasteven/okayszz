@@ -23,12 +23,12 @@ const paylines = [
   [0, 4, 8], // Diagonal
   [2, 4, 6], // Diagonal
 ];
-const BASE_WIN_CHANCE = 49; // Base 49% winning chance
-const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
-const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
-const MAX_WIN_CHANCE = 90; // Maximum win chance
-const MIN_WIN_CHANCE = 10; // Minimum win chance
+const MIN_BET = 100; // Minimum bet amount
+const MAX_BET = 10000; // Maximum bet amount
 const COOLDOWN_DURATION = 10000; // 10 seconds cooldown
+const SPIN_DURATION = 3000; // 3 seconds for spinning animation
+const JACKPOT_CHANCE = 0.01; // 1% chance of hitting the jackpot
+const JACKPOT_MULTIPLIER = 10; // 10x multiplier for the jackpot
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -41,11 +41,15 @@ module.exports = {
         .setRequired(true)
     ),
   cooldowns: new Map(),
-  winChances: new Map(),
 
   async execute(interaction) {
     const userId = interaction.user.id;
     const betAmount = interaction.options.getInteger('bet');
+
+    // Check if the bet amount is within the allowed range
+    if (betAmount < MIN_BET || betAmount > MAX_BET) {
+      return interaction.reply(`The bet amount should be between ${currencyFormatter.format(MIN_BET, { code: 'USD' })} and ${currencyFormatter.format(MAX_BET, { code: 'USD' })}.`);
+    }
 
     // Check if the user is on cooldown
     if (this.cooldowns.has(userId)) {
@@ -58,15 +62,19 @@ module.exports = {
 
     const user = await User.findOne({ userId });
 
-    if (!user || user.balance < betAmount) {
+    if (!user) {
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setDescription(`❌ You don't have an account in the economy.`);
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (user.balance < betAmount) {
       const embed = new EmbedBuilder()
         .setColor(0xFF0000)
         .setDescription(`❌ You don't have enough balance to bet ${currencyFormatter.format(betAmount, { code: 'USD' })}.`);
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
-
-    // Get the user's win chance
-    let winChance = this.winChances.get(userId) || BASE_WIN_CHANCE;
 
     const tutorialEmbed = new EmbedBuilder()
       .setColor(0x00FF00)
@@ -138,26 +146,30 @@ module.exports = {
 
         const reelsString = `${reels[0]} ${reels[1]} ${reels[2]}\n${reels[3]} ${reels[4]} ${reels[5]}\n${reels[6]} ${reels[7]} ${reels[8]}`;
 
-        const won = Math.random() < winChance / 100 || winnings > 0;
-        if (won) {
-          user.balance += winnings;
-          await user.save();
-          winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
-        } else {
-          user.balance -= betAmount;
-          await user.save();
-          winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
+        const isJackpot = Math.random() < JACKPOT_CHANCE;
+        if (isJackpot) {
+          winnings = betAmount * JACKPOT_MULTIPLIER;
         }
-        this.winChances.set(userId, winChance);
+
+        let payout = winnings > 0 ? winnings : -betAmount;
+
+        // Deduct the bet amount from the user's balance before checking the win/loss
+        user.balance -= betAmount;
+        await user.save();
+
+        if (winnings > 0 || isJackpot) {
+          user.balance += payout;
+          await user.save();
+        }
 
         const embed = new EmbedBuilder()
-          .setColor(winnings > 0 ? 0x00FF00 : 0xFF0000)
-          .setTitle(winnings > 0 ? '🎉 You won! 🎉' : '😔 You lost... 😔')
-          .setDescription(`${reelsString}\n\nYou ${winnings > 0 ? `won ${currencyFormatter.format(winnings, { code: 'USD' })}!` : `lost ${currencyFormatter.format(betAmount, { code: 'USD' })}.`}`)
+          .setColor(winnings > 0 || isJackpot ? 0x00FF00 : 0xFF0000)
+          .setTitle(winnings > 0 || isJackpot ? '🎉 You won! 🎉' : '😔 You lost... 😔')
+          .setDescription(`${reelsString}\n\nYou ${winnings > 0 || isJackpot ? `won ${currencyFormatter.format(payout, { code: 'USD' })}!` : `lost ${currencyFormatter.format(betAmount, { code: 'USD' })}.`}`)
           .addFields(
             { name: 'New Balance', value: `💰 ${currencyFormatter.format(user.balance, { code: 'USD' })}` },
             { name: 'Winning Lines', value: winningLines.length > 0 ? winningLines.map(line => `[${line.line.join(', ')}] x${line.multiplier}`).join('\n') : 'None' },
-            { name: 'Win Chance', value: `${winChance}% 🎲` }
+            { name: 'Jackpot', value: isJackpot ? `🎰 You hit the jackpot! 🎰` : 'No jackpot this time.' }
           );
 
         await i.editReply({ embeds: [embed] });
@@ -165,7 +177,7 @@ module.exports = {
 
         // Set a cooldown for the user
         this.cooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-      }, 3000);
+      }, SPIN_DURATION);
     });
 
     collector.on('end', async collected => {
