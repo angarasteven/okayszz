@@ -7,7 +7,7 @@ const fruitMultipliers = {
   '🍒': 4, // Cherry (x4 multiplier)
   '🍋': 3, // Lemon (x3 multiplier)
   '🍊': 3, // Orange (x3 multiplier)
-  '🍇': 2, // Grapes (x2 multiplier)
+  '🍇': 3, // Grapes (x2 multiplier)
   '🍓': 2, // Strawberry (x2 multiplier)
   '🍍': 2, // Pineapple (x2 multiplier)
   '🍌': 2, // Banana (x2 multiplier)
@@ -32,9 +32,9 @@ const JACKPOT_MULTIPLIER = 10; // 10x multiplier for the jackpot
 const BASE_WIN_CHANCE = 50; // Base 50% winning chance
 const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
 const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
-const MAX_WIN_CHANCE = 63; // Maximum win chance
+const MAX_WIN_CHANCE = 64; // Maximum win chance
 const MIN_WIN_CHANCE = 10; // Minimum win chance
-const RESET_WIN_CHANCE = 51; // Reset win chance to BASE_WIN_CHANCE when reached
+const RESET_WIN_CHANCE = 50; // Reset win chance to BASE_WIN_CHANCE when reached
 
 module.exports = {
   data: new SlashCommandBuilder()
