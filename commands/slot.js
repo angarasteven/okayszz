@@ -29,6 +29,11 @@ const COOLDOWN_DURATION = 10000; // 10 seconds cooldown
 const SPIN_DURATION = 3000; // 3 seconds for spinning animation
 const JACKPOT_CHANCE = 0.01; // 1% chance of hitting the jackpot
 const JACKPOT_MULTIPLIER = 10; // 10x multiplier for the jackpot
+const BASE_WIN_CHANCE = 50; // Base 50% winning chance
+const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
+const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
+const MAX_WIN_CHANCE = 90; // Maximum win chance
+const MIN_WIN_CHANCE = 10; // Minimum win chance
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -41,6 +46,7 @@ module.exports = {
         .setRequired(true)
     ),
   cooldowns: new Map(),
+  winChances: new Map(),
 
   async execute(interaction) {
     const userId = interaction.user.id;
@@ -75,6 +81,9 @@ module.exports = {
         .setDescription(`❌ You don't have enough balance to bet ${currencyFormatter.format(betAmount, { code: 'USD' })}.`);
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
+
+    // Get the user's win chance
+    let winChance = this.winChances.get(userId) || BASE_WIN_CHANCE;
 
     const tutorialEmbed = new EmbedBuilder()
       .setColor(0x00FF00)
@@ -153,14 +162,17 @@ module.exports = {
 
         let payout = winnings > 0 ? winnings : -betAmount;
 
-        // Deduct the bet amount from the user's balance before checking the win/loss
-        user.balance -= betAmount;
-        await user.save();
-
-        if (winnings > 0 || isJackpot) {
+        const won = Math.random() < winChance / 100 || winnings > 0 || isJackpot;
+        if (won) {
           user.balance += payout;
           await user.save();
+          winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
+        } else {
+          user.balance -= betAmount;
+          await user.save();
+          winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
         }
+        this.winChances.set(userId, winChance);
 
         const embed = new EmbedBuilder()
           .setColor(winnings > 0 || isJackpot ? 0x00FF00 : 0xFF0000)
@@ -169,7 +181,8 @@ module.exports = {
           .addFields(
             { name: 'New Balance', value: `💰 ${currencyFormatter.format(user.balance, { code: 'USD' })}` },
             { name: 'Winning Lines', value: winningLines.length > 0 ? winningLines.map(line => `[${line.line.join(', ')}] x${line.multiplier}`).join('\n') : 'None' },
-            { name: 'Jackpot', value: isJackpot ? `🎰 You hit the jackpot! 🎰` : 'No jackpot this time.' }
+            { name: 'Jackpot', value: isJackpot ? `🎰 You hit the jackpot! 🎰` : 'No jackpot this time.' },
+            { name: 'Win Chance', value: `${winChance}% 🎲` }
           );
 
         await i.editReply({ embeds: [embed] });
