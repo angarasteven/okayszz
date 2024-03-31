@@ -32,8 +32,9 @@ const JACKPOT_MULTIPLIER = 10; // 10x multiplier for the jackpot
 const BASE_WIN_CHANCE = 50; // Base 50% winning chance
 const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
 const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
-const MAX_WIN_CHANCE = 90; // Maximum win chance
+const MAX_WIN_CHANCE = 63; // Maximum win chance
 const MIN_WIN_CHANCE = 10; // Minimum win chance
+const RESET_WIN_CHANCE = 51; // Reset win chance to BASE_WIN_CHANCE when reached
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -47,6 +48,7 @@ module.exports = {
     ),
   cooldowns: new Map(),
   winChances: new Map(),
+  betAmounts: new Map(),
 
   async execute(interaction) {
     const userId = interaction.user.id;
@@ -166,13 +168,18 @@ module.exports = {
         if (won) {
           user.balance += payout;
           await user.save();
-          winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
+          if (winChance === RESET_WIN_CHANCE) {
+            winChance = BASE_WIN_CHANCE;
+          } else {
+            winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
+          }
         } else {
           user.balance -= betAmount;
           await user.save();
           winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
         }
         this.winChances.set(userId, winChance);
+        this.betAmounts.set(userId, betAmount);
 
         const embed = new EmbedBuilder()
           .setColor(winnings > 0 || isJackpot ? 0x00FF00 : 0xFF0000)
@@ -185,7 +192,32 @@ module.exports = {
             { name: 'Win Chance', value: `${winChance}% 🎲` }
           );
 
-        await i.editReply({ embeds: [embed] });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('slots_again')
+            .setLabel('Again?')
+            .setStyle(ButtonStyle.Primary)
+        );
+
+        await i.editReply({ embeds: [embed], components: [row] });
+
+        const againFilter = j => j.customId === 'slots_again' && j.user.id === interaction.user.id;
+        const againCollector = i.channel.createMessageComponentCollector({ filter: againFilter, time: 60000 });
+
+        againCollector.on('collect', async j => {
+          const betAmount = this.betAmounts.get(userId);
+          this.execute(j);
+        });
+
+        againCollector.on('end', async collected => {
+          if (collected.size === 0) {
+            const embed = new EmbedBuilder()
+              .setColor(0xFF0000)
+              .setDescription('❌ You didn\'t play again in time. The game has ended.');
+            await i.editReply({ embeds: [embed], components: [] });
+          }
+        });
+
         collector.stop();
 
         // Set a cooldown for the user
