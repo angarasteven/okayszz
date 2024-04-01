@@ -5,25 +5,24 @@ const crypto = require('crypto');
 
 const SLOT_SYMBOLS = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '⚪', '⚫'];
 const SYMBOL_MULTIPLIERS = {
-  '🔴': 2, // Red
-  '🟠': 2, // Orange
-  '🟡': 2, // Yellow
-  '🟢': 2, // Green
-  '🔵': 2, // Blue
+  '🔴': 1, // Red
+  '🟠': 1, // Orange
+  '🟡': 1, // Yellow
+  '🟢': 1, // Green
+  '🔵': 1, // Blue
   '🟣': 2, // Purple
-  '⚪': 2, // White
+  '⚪': 1, // White
   '⚫': 2, // Black
 };
 const SLOT_ROWS = 3;
 const SLOT_COLS = 3;
 const MIN_BET = 100;
-const MAX_BET = 10000;
-const REWARD_MULTIPLIER = 3;
-const COOLDOWN_DURATION = 35000; // 7 seconds
-const STREAK_MULTIPLIER = 0.5; // 50% bonus for each consecutive win
-const ANIMATION_DURATION = 5000; // 5 seconds
-
-let winningChance = 0.5; // Initial winning chance
+const MAX_BET = 8000;
+const REWARD_MULTIPLIER = 2;
+const COOLDOWN_DURATION = 90000; // 7 seconds
+const STREAK_MULTIPLIER = 0.2; // 50% bonus for each consecutive win
+const ANIMATION_DURATION = 9000; // 5 seconds
+const WIN_CHANCE = 0.43; // 43% win chance
 const cooldowns = new Map(); // Cooldown map for each user
 const streaks = new Map(); // Streak map for each user
 
@@ -69,11 +68,9 @@ module.exports = {
       const symbolMultiplier = SYMBOL_MULTIPLIERS[winningSymbol];
       rewardAmount = betAmount * REWARD_MULTIPLIER * multiplier * symbolMultiplier;
       user.balance += rewardAmount;
-      winningChance = Math.max(0.5, winningChance - 0.005); // Decrease winning chance by 0.5% on win
       streaks.set(interaction.user.id, streak + 1);
     } else {
       user.balance -= betAmount;
-      winningChance = Math.min(0.64, winningChance + 0.01); // Increase winning chance by 1% on loss
       streaks.set(interaction.user.id, 0);
     }
 
@@ -115,7 +112,6 @@ module.exports = {
           { name: 'Bet Amount', value: `${currencyFormatter.format(betAmount, { code: 'COINS' })}`, inline: true },
           { name: 'Result', value: isWin ? `You won ${currencyFormatter.format(rewardAmount, { code: 'COINS' })}! ${getWinReason(slots)}` : 'You lost.', inline: true },
           { name: 'Balance', value: `${currencyFormatter.format(user.balance, { code: 'COINS' })}`, inline: true },
-          { name: 'Winning Chance', value: `${(winningChance * 100).toFixed(2)}%`, inline: true },
           { name: 'Streak', value: `${streak}`, inline: true },
           { name: 'Multiplier', value: `${multiplier.toFixed(2)}x`, inline: true }
         );
@@ -146,12 +142,12 @@ function renderSlots(slots) {
 }
 
 function checkWin(slots) {
-  // Check rows
-  for (const row of slots) {
-    if (row.every(symbol => symbol === row[0])) {
-      return true;
-    }
+// Check rows
+for (const row of slots) {
+  if (row.every(symbol => symbol === row[0])) {
+    return true;
   }
+}
 
   // Check columns
   for (let col = 0; col < SLOT_COLS; col++) {
@@ -159,7 +155,7 @@ function checkWin(slots) {
     if (column.every(symbol => symbol === column[0])) {
       return true;
     }
-  }
+}
 
   // Check diagonals
   const diagonal1 = [slots[0][0], slots[1][1], slots[2][2]];
@@ -168,9 +164,8 @@ function checkWin(slots) {
     return true;
   }
 
-  // Check winning chance
   const randomValue = crypto.randomBytes(4).readUInt32BE(0) / 0xFFFFFFFF;
-  return randomValue < winningChance;
+  return randomValue < WIN_CHANCE;
 }
 
 function getWinningSymbol(slots) {

@@ -6,10 +6,7 @@ const MIN_BET = 100; // Minimum bet amount
 const MAX_BET = 10000; // Maximum bet amount
 const COOLDOWN_DURATION = 7000; // 7 seconds cooldown
 const STREAK_MULTIPLIER = 1.2; // 20% bonus for each consecutive win
-const WIN_CHANCE_INCREASE = 1; // Increase in win chance after a loss
-const WIN_CHANCE_DECREASE = 0.5; // Decrease in win chance after a win
-const MAX_WIN_CHANCE = 90; // Maximum win chance
-const MIN_WIN_CHANCE = 10; // Minimum win chance
+const DEFAULT_WIN_CHANCE = 43; // Default winning chance
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -33,7 +30,6 @@ module.exports = {
     ),
   cooldowns: new Map(),
   streaks: new Map(),
-  winChances: new Map(),
 
   async execute(interaction) {
     const userId = interaction.user.id;
@@ -54,10 +50,9 @@ module.exports = {
       }
     }
 
-    // Get the user's balance and win chance
+    // Get the user's balance
     const user = await User.findOne({ userId });
     const userBalance = user.balance;
-    let winChance = this.winChances.get(userId) || 50;
 
     // Check if the user has enough balance
     if (userBalance < amount) {
@@ -65,22 +60,19 @@ module.exports = {
     }
 
     // Flip the coin
-    const result = Math.random() < winChance / 100 ? choice : choice === 'heads' ? 'tails' : 'heads';
+    const result = Math.random() < DEFAULT_WIN_CHANCE / 100 ? choice : choice === 'heads' ? 'tails' : 'heads';
     const won = result === choice;
 
-    // Update the user's balance, streak, and win chance
+    // Update the user's balance and streak
     let streak = this.streaks.get(userId) || 0;
     let multiplier = 1;
     if (won) {
       streak++;
       multiplier = STREAK_MULTIPLIER ** streak;
-      winChance = Math.max(MIN_WIN_CHANCE, winChance - WIN_CHANCE_DECREASE);
     } else {
       streak = 0;
-      winChance = Math.min(MAX_WIN_CHANCE, winChance + WIN_CHANCE_INCREASE);
     }
     this.streaks.set(userId, streak);
-    this.winChances.set(userId, winChance);
 
     const payout = won ? amount * multiplier : -amount;
     await User.updateOne({ userId }, { $inc: { balance: payout } });
@@ -97,7 +89,6 @@ module.exports = {
       .addFields(
         { name: 'Your Balance', value: `${currencyFormatter.format(userBalance + payout, { code: 'USD' })} 💰`, inline: true },
         { name: 'Streak', value: `${streak} 🔥`, inline: true },
-        { name: 'Win Chance', value: `${winChance}% 🎲`, inline: true },
         { name: 'Multiplier', value: `${multiplier}x 💎`, inline: true }
       );
     interaction.reply({ embeds: [embed] });

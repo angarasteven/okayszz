@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
   balance: { type: Number, default: 0 },
   lastDailyReward: { type: Number, default: 0 },
   lastWorkTime: { type: Number, default: 0 },
+  antiRobExpiration: { type: Number, default: 0 },
   jobLevel: {
     type: Object,
     default: {

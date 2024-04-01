@@ -1,100 +1,171 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
-const User = require('../models/User');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const Giveaway = require('../models/Giveaway');
-const currencyFormatter = require('currency-formatter');
+const User = require('../models/User');
 const ms = require('ms');
 
 module.exports = {
+  name: 'giveaway',
   data: new SlashCommandBuilder()
     .setName('giveaway')
-    .setDescription('🎉 Start a money giveaway in the economy 💰')
-    .addIntegerOption(option =>
-      option
-        .setName('prize')
-        .setDescription('The amount of coins to be given away')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('duration')
-        .setDescription('The duration of the giveaway (e.g., 1h, 30m, 5d)')
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription('Start a giveaway')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('start')
+        .setDescription('Start a new giveaway')
+        .addStringOption(option =>
+          option
+            .setName('type')
+            .setDescription('The type of prize (money or item)')
+            .setRequired(true)
+            .addChoices(
+              { name: 'Money', value: 'money' },
+              { name: 'Item', value: 'item' }
+            )
+        )
+        .addNumberOption(option =>
+          option
+            .setName('value')
+            .setDescription('The amount of money or the item ID')
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option
+            .setName('duration')
+            .setDescription('The duration of the giveaway (e.g., 1h, 30m, 2d)')
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option
+            .setName('item-name')
+            .setDescription('The name of the item (if type is "item")')
+        )
+    ),
   async execute(interaction) {
-    if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+    if (!interaction.memberPermissions.has('ADMINISTRATOR')) {
+      return interaction.reply({ content: '❌ You need to be an administrator to start a giveaway.', ephemeral: true });
     }
 
-    const prize = interaction.options.getInteger('prize');
-    const duration = interaction.options.getString('duration');
-    const durationMs = ms(duration);
+    const subcommand = interaction.options.getSubcommand();
 
-    if (!durationMs || durationMs <= 0) {
-      return interaction.reply({ content: '⚠️ Invalid duration. Please provide a valid duration (e.g., 1h, 30m, 5d).', ephemeral: true });
-    }
+    if (subcommand === 'start') {
+      const type = interaction.options.getString('type');
+      const value = interaction.options.getNumber('value');
+      const duration = interaction.options.getString('duration');
+      const itemName = interaction.options.getString('item-name') || null;
 
-    const embed = new EmbedBuilder()
-      .setColor(0x00FF00)
-      .setTitle('🎉 Money Giveaway! 💰')
-      .setDescription(`A giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰 has started! Click the "Enter" button below to participate.\n\nDuration: ${duration}\nParticipants: 0`)
-      .setFooter({ text: 'Made by _trulysatoshi' });
+      const endTime = Date.now() + ms(duration);
 
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('enter')
-          .setLabel('Enter')
-          .setStyle(ButtonStyle.Success),
-      );
+      const embed = new EmbedBuilder()
+        .setTitle(`🎉 Giveaway: ${type === 'money' ? `${value} coins` : itemName}`)
+        .setDescription(`React with 🎉 to enter the giveaway!\n\nEnds: <t:${Math.floor(endTime / 1000)}:R>`)
+        .setColor(0x00FF00);
 
-    const giveawayMessage = await interaction.reply({ embeds: [embed], components: [row] });
+      const message = await interaction.reply({ embeds: [embed], fetchReply: true });
 
-    const entrants = [];
-    const filter = (interaction) => interaction.customId === 'enter';
-    const collector = giveawayMessage.createMessageComponentCollector({ filter, time: durationMs });
+      message.react('🎉');
 
-    collector.on('collect', async (buttonInteraction) => {
-      const userId = buttonInteraction.user.id;
-      if (!entrants.includes(userId)) {
-        entrants.push(userId);
-        await buttonInteraction.reply({ content: `✅ You have entered the giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰!`, ephemeral: true });
-      } else {
-        await buttonInteraction.reply({ content: '⚠️ You have already entered this giveaway.', ephemeral: true });
-      }
-    });
+      const giveaway = new Giveaway({
+        messageId: message.id,
+        channelId: message.channelId,
+        guildId: message.guildId,
+        prize: {
+          type,
+          value,
+          name: itemName,
+        },
+        endTime,
+        participants: [],
+      });
 
-    collector.on('end', async (collected) => {
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('enter')
-          .setLabel('Giveaway Ended')
-          .setStyle(ButtonStyle.Danger)
-          .setDisabled(true),
-      );
+      await giveaway.save();
 
-      await giveawayMessage.edit({ components: [row] });
-      await Giveaway.findOneAndDelete({ messageId: giveawayMessage.id });
+      const updateGiveawayEmbed = async () => {
+        const giveawayData = await Giveaway.findOne({ messageId: message.id });
 
-      if (entrants.length > 0) {
-        const winnerId = entrants[Math.floor(Math.random() * entrants.length)];
-        const winner = await interaction.client.users.fetch(winnerId);
-        const winnerUser = await User.findOne({ userId: winnerId });
+        if (!giveawayData) return;
 
-        if (!winnerUser) {
-          const newUser = new User({ userId: winnerId, balance: prize });
-          await newUser.save();
-          await winner.send(`🎉 Congratulations! You won the giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰 in the ${interaction.channel} channel!`);
-          await interaction.channel.send(`🎉 Congratulations, <@${winnerId}>! You won the giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰! Your balance has been updated.`);
-        } else {
-          winnerUser.balance += prize;
-          await winnerUser.save();
-          await winner.send(`🎉 Congratulations! You won the giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰 in the ${interaction.channel} channel! Your new balance is ${currencyFormatter.format(winnerUser.balance, { code: 'USD' })}.`);
-          await interaction.channel.send(`🎉 Congratulations, <@${winnerId}>! You won the giveaway for ${currencyFormatter.format(prize, { code: 'USD' })} 💰! Your new balance is ${currencyFormatter.format(winnerUser.balance, { code: 'USD' })}.`);
+        const reaction = message.reactions.cache.get('🎉');
+        const participants = await reaction.users.fetch();
+
+        const updatedParticipants = participants
+          .filter(user => !user.bot)
+          .map(user => user.id)
+          .filter(id => !giveawayData.participants.includes(id));
+
+        giveawayData.participants.push(...updatedParticipants);
+        await giveawayData.save();
+
+        const timeLeft = giveawayData.endTime - Date.now();
+        const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+
+        const updatedEmbed = new EmbedBuilder()
+          .setTitle(`🎉 Giveaway: ${giveawayData.prize.type === 'money' ? `${giveawayData.prize.value} coins` : giveawayData.prize.name}`)
+          .setDescription(`React with 🎉 to enter the giveaway!\n\nParticipants: ${giveawayData.participants.length}\n\nTime Left: ${days}d ${hours}h ${minutes}m ${seconds}s`)
+          .setColor(0x00FF00);
+
+        message.edit({ embeds: [updatedEmbed] });
+
+        if (timeLeft <= 0) {
+          const winnerId = giveawayData.participants[Math.floor(Math.random() * giveawayData.participants.length)];
+          giveawayData.winnerId = winnerId;
+          await giveawayData.save();
+
+          const winner = await interaction.client.users.fetch(winnerId);
+          const winnerDM = await winner.createDM();
+
+          if (giveawayData.prize.type === 'money') {
+            const user = await User.findOne({ userId: winnerId });
+            user.balance += giveawayData.prize.value;
+            await user.save();
+
+            await winnerDM.send(`🎉 Congratulations! You won ${giveawayData.prize.value} coins in the giveaway! Your new balance is ${user.balance} coins.`);
+          } else {
+            await winnerDM.send(`🎉 Congratulations! You won the ${giveawayData.prize.name} item in the giveaway!`);
+          }
+
+          const winnerEmbed = new EmbedBuilder()
+            .setTitle('🎉 Giveaway Winner')
+            .setDescription(`The winner of the giveaway for ${giveawayData.prize.type === 'money' ? `${giveawayData.prize.value} coins` : giveawayData.prize.name} is ${winner.username}!`)
+            .setColor(0x00FF00);
+
+          await message.edit({ embeds: [winnerEmbed] });
+          await message.channel.send(`Congratulations ${winner}! You won the giveaway!`);
+
+          await Giveaway.findOneAndDelete({ messageId: message.id });
         }
-      } else {
-        await interaction.editReply({ content: '😔 No one entered the giveaway.', components: [] });
-      }
-    });
+      };
+
+      const checkOngoingGiveaways = async () => {
+        const ongoingGiveaways = await Giveaway.find({ endTime: { $gt: Date.now() } });
+
+        for (const giveaway of ongoingGiveaways) {
+          const channel = interaction.client.channels.cache.get(giveaway.channelId);
+          if (!channel) continue;
+
+          const message = await channel.messages.fetch(giveaway.messageId).catch(() => null);
+          if (!message) continue;
+
+          const reaction = message.reactions.cache.get('🎉');
+          if (!reaction) continue;
+
+          const participants = await reaction.users.fetch();
+
+          const updatedParticipants = participants
+            .filter(user => !user.bot)
+            .map(user => user.id)
+            .filter(id => !giveaway.participants.includes(id));
+
+          giveaway.participants.push(...updatedParticipants);
+          await giveaway.save();
+        }
+      };
+
+      checkOngoingGiveaways();
+      setInterval(updateGiveawayEmbed, 10000);
+      setInterval(checkOngoingGiveaways, 60000); // Check for ongoing giveaways every minute
+    }
   },
 };

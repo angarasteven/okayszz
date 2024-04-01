@@ -1,9 +1,12 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const User = require('../models/User');
 const currencyFormatter = require('currency-formatter');
+const { generateRobberyStory } = require('../utils/robberyStories');
 
-const COOLDOWN_DURATION = 180000; // 3 minutes cooldown
+const COOLDOWN_DURATION = 600000; // 10 minutes cooldown
+
 module.exports = {
+  name: 'rob',
   data: new SlashCommandBuilder()
     .setName('rob')
     .setDescription('Attempt to rob coins from another user')
@@ -17,59 +20,52 @@ module.exports = {
 
   async execute(interaction) {
     const userId = interaction.user.id;
-    const robber = await User.findOne({ userId });
     const targetUser = interaction.options.getUser('target');
+    const robber = await User.findOne({ userId });
     const target = await User.findOne({ userId: targetUser.id });
 
-    // Check if the user is on cooldown
+    // Check if the target user has anti-rob protection enabled
+    if (target && target.antiRobExpiration > Date.now()) {
+      const remainingTime = target.antiRobExpiration - Date.now();
+      const formattedTime = formatDuration(remainingTime);
+      return interaction.reply({ content: `🛡️ ${targetUser.username} is under anti-rob protection for ${formattedTime}. Try someone else.`, ephemeral: true });
+    }
+
     if (this.cooldowns.has(userId)) {
       const cooldownExpiration = this.cooldowns.get(userId);
       const remainingCooldown = cooldownExpiration - Date.now();
       if (remainingCooldown > 0) {
-        const embed = new EmbedBuilder()
-          .setColor(0xFF0000)
-          .setDescription(`⏰ You're on cooldown for ${Math.ceil(remainingCooldown / 1000)} more seconds before you can rob again.`);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ content: `⏰ You're on cooldown. Try again in ${Math.ceil(remainingCooldown / 60000)} minutes.`, ephemeral: true });
       }
     }
 
     if (!robber || !target) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription('❌ Either you or the target user does not have an account in the economy.');
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ content: '👻 One of you doesn\'t exist in the economy system.', ephemeral: true });
     }
 
     if (robber.balance < 500) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription('❌ You need at least 500 coins in your balance to attempt a robbery.');
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ content: '😅 You need at least 500 coins to attempt a robbery.', ephemeral: true });
     }
 
     if (target.balance < 500) {
-      const embed = new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setDescription(`❌ ${targetUser.username} doesn't have enough coins to make it worth robbing.`);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ content: `😂 ${targetUser.username} doesn't have enough coins. Try someone else.`, ephemeral: true });
     }
 
-    const robberBalance = robber.balance;
-    const targetBalance = target.balance;
-    const maxRobberyAmount = Math.floor(targetBalance * 0.25); // Maximum amount that can be robbed (25% of target's balance)
-    const robberyAmount = Math.floor(Math.random() * maxRobberyAmount) + 1; // Random amount between 1 and maxRobberyAmount
-
-    const successChance = Math.floor(Math.random() * 100); // Random number between 0 and 99
-    const successRate = Math.floor((robberBalance / (robberBalance + targetBalance)) * 100); // Success rate based on the balance ratio
-
+    // Robbery story
+    const robberyStory = generateRobberyStory();
     const storyEmbed = new EmbedBuilder()
       .setColor(0xFFFF00)
-      .setDescription(`🏡 ${interaction.user.username} sneaks up to ${targetUser.username}'s house, carefully avoiding the security cameras. 🚨\n\n👀 After scouting the area, you spot an open window on the second floor. You grab a nearby ladder and climb up, trying not to make a sound. 🤫\n\n💥 With a swift motion, you smash the window and jump inside, landing in what appears to be a bedroom. The alarm starts blaring, and you hear footsteps approaching. 🚔\n\n🔍 You quickly scan the room for valuables and spot a safe in the corner. You rush towards it and start fiddling with the lock. 🔐\n\n⏰ Time is running out, and you can hear the police sirens getting closer. Will you be able to crack the safe and make off with the loot, or will you be caught red-handed? 🚓`);
+      .setDescription(robberyStory);
 
     await interaction.reply({ embeds: [storyEmbed] });
 
     setTimeout(async () => {
-      if (successChance <= successRate) {
+      // Robbery logic
+      const maxRobberyAmount = Math.floor(target.balance * 0.25);
+      const robberyAmount = Math.floor(Math.random() * maxRobberyAmount) + 1;
+      const successChance = Math.random() < 0.4; // 50% chance of success
+
+      if (successChance) {
         // Successful robbery
         robber.balance += robberyAmount;
         target.balance -= robberyAmount;
@@ -78,22 +74,39 @@ module.exports = {
 
         const embed = new EmbedBuilder()
           .setColor(0x00FF00)
-          .setDescription(`💰 You successfully cracked the safe and made off with ${currencyFormatter.format(robberyAmount, { code: 'USD' })}! Your new balance is ${currencyFormatter.format(robber.balance, { code: 'USD' })}. 🏃‍♂️`);
+          .setDescription(`💰 You successfully robbed ${currencyFormatter.format(robberyAmount, { code: 'USD' })} from ${targetUser.username}! Your new balance is ${currencyFormatter.format(robber.balance, { code: 'USD' })}.`);
         interaction.editReply({ embeds: [embed] });
+
+        // DM the robbed user
+        try {
+          const dm = await targetUser.createDM();
+          await dm.send(`😱 You've been robbed by ${interaction.user.username}! They took ${currencyFormatter.format(robberyAmount, { code: 'USD' })}. Consider buying anti-rob protection with \`/buyantirob\`.`);
+        } catch (error) {
+          console.error(`Failed to send DM to ${targetUser.username}:`, error);
+        }
       } else {
         // Failed robbery
-        const lossAmount = Math.floor(robberBalance * 0.1); // 10% of the robber's balance is lost
-        robber.balance -= lossAmount;
-        await robber.save();
-
         const embed = new EmbedBuilder()
           .setColor(0xFF0000)
-          .setDescription(`🚔 The police caught you red-handed! You were arrested and fined ${currencyFormatter.format(lossAmount, { code: 'USD' })}. Your new balance is ${currencyFormatter.format(robber.balance, { code: 'USD' })}. 😔`);
+          .setDescription(`🚓 Your robbery attempt failed! Better luck next time.`);
         interaction.editReply({ embeds: [embed] });
       }
 
-      // Set a cooldown for the user
+      // Set cooldown
       this.cooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-    }, 5000); // Delay of 5 seconds for the story
+    }, 8000); // Delay of 8 seconds for the story
   },
 };
+
+// Helper function to format duration
+function formatDuration(ms) {
+  const seconds = Math.floor((ms / 1000) % 60);
+  const minutes = Math.floor((ms / (1000 * 60)) % 60);
+  const hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
+
+  const formattedHours = hours > 0 ? `${hours} hour${hours > 1 ? 's' : ''} ` : '';
+  const formattedMinutes = minutes > 0 ? `${minutes} minute${minutes > 1 ? 's' : ''} ` : '';
+  const formattedSeconds = seconds > 0 ? `${seconds} second${seconds > 1 ? 's' : ''}` : '';
+
+  return `${formattedHours}${formattedMinutes}${formattedSeconds}`;
+}
